@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Privacy Shield for AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+      </svg>
+      <span>Privacy Shield</span>
+    </div>
+    <label class="toggle-wrap" title="Enable/disable the shield">
+      <input type="checkbox" id="enabledToggle">
+      <span class="toggle-track">
+        <span class="toggle-thumb"></span>
+      </span>
+    </label>
+  </header>
+
+  <section class="status-row">
+    <div class="status-item">
+      <span class="dot" id="ollamaDot"></span>
+      <span id="ollamaStatus">Checking Ollama…</span>
+    </div>
+    <button class="link-btn" id="refreshOllama">↻ Refresh</button>
+  </section>
+
+  <!-- Session mappings -->
+  <section class="mappings-section">
+    <div class="section-header">
+      <h2>Session mappings</h2>
+      <button class="link-btn danger" id="clearMappings">Clear</button>
+    </div>
+    <p class="hint">Values replaced in this browser session. Responses are automatically decoded back.</p>
+    <div id="mappingsList" class="mappings-list">
+      <p class="empty">No replacements yet. Send a message with personal data to see mappings here.</p>
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <details class="settings-panel">
+    <summary>Settings</summary>
+    <div class="settings-body">
+      <label>
+        Ollama URL
+        <input type="text" id="ollamaUrl" placeholder="http://localhost:11434">
+      </label>
+      <label>
+        Model
+        <input type="text" id="modelInput" placeholder="llama3.2">
+      </label>
+      <button id="saveSettings" class="primary-btn">Save settings</button>
+      <p class="hint">Run <code>ollama pull llama3.2</code> to get a model locally.</p>
+    </div>
+  </details>
+
+  <script src="popup.js"></script>
+</body>
+</html>
