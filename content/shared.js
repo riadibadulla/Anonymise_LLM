@@ -24,14 +24,9 @@ class PrivacyShieldBase {
     const settings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
     this.enabled = settings.enabled;
     this._injectStyles();
-
-    // Attach document-level interceptors immediately — they look up the
-    // send button / input element dynamically on each event, so they work
-    // even after React re-renders replace the DOM nodes.
+    this._initPdfJs();
     this._attachInterceptors();
-
-    // Poll until the chat UI appears, then inject the toggle button
-    // and start the response observer.
+    this._attachFileInterceptors();
     this._pollForUI();
   }
 
@@ -49,10 +44,20 @@ class PrivacyShieldBase {
     }
   }
 
-  // ─── Interceptors (document-level, survive re-renders) ────────────────────
+  // ─── PDF.js setup ─────────────────────────────────────────────────────────
+
+  _initPdfJs() {
+    if (typeof pdfjsLib !== 'undefined') {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('lib/pdf.worker.min.js');
+      console.log('[PrivacyShield] pdf.js ready');
+    } else {
+      console.warn('[PrivacyShield] pdf.js not loaded — PDF support disabled');
+    }
+  }
+
+  // ─── Send interceptors (window capture, survive re-renders) ───────────────
 
   _attachInterceptors() {
-    // Click on send button — window capture fires before any page listener
     window.addEventListener('click', (e) => {
       const btn = this.getSendButton();
       if (!btn || !(e.target === btn || btn.contains(e.target))) return;
@@ -62,8 +67,6 @@ class PrivacyShieldBase {
       this._onSendAttempt(e, 'click');
     }, true);
 
-    // Enter key — window capture, check isContentEditable so we don't need
-    // a fragile element lookup at event time
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' || e.shiftKey) return;
       if (!e.target.isContentEditable) return;
@@ -73,7 +76,7 @@ class PrivacyShieldBase {
       this._onSendAttempt(e, 'keydown');
     }, true);
 
-    console.log('[PrivacyShield] document-level interceptors attached');
+    console.log('[PrivacyShield] send interceptors attached');
   }
 
   async _onSendAttempt(e, kind) {
@@ -112,7 +115,6 @@ class PrivacyShieldBase {
       this._showBadge('Ollama error — sending original', 'error');
     }
 
-    // Give ProseMirror/React a tick to process the new text and re-enable the button
     setTimeout(() => {
       this.skipNextSend = true;
       this._doTriggerSend();
@@ -120,7 +122,6 @@ class PrivacyShieldBase {
   }
 
   _doTriggerSend() {
-    // Prefer Enter key dispatch — works regardless of button disabled state
     const input = this.getInput();
     if (input) {
       console.log('[PrivacyShield] dispatching Enter on input');
@@ -130,12 +131,127 @@ class PrivacyShieldBase {
       }));
       return;
     }
-    // Fallback: click the button directly
     const btn = this.getSendButton();
     if (btn) {
       console.log('[PrivacyShield] clicking send button');
       btn.click();
     }
+  }
+
+  // ─── File interception (drag-drop + file input) ───────────────────────────
+
+  _attachFileInterceptors() {
+    // Intercept file drops
+    window.addEventListener('drop', (e) => this._onFileDrop(e), true);
+
+    // Intercept <input type="file"> changes
+    window.addEventListener('change', (e) => {
+      if (e.target?.type === 'file') this._onFileInput(e);
+    }, true);
+
+    console.log('[PrivacyShield] file interceptors attached');
+  }
+
+  async _onFileDrop(e) {
+    if (!this.enabled) return;
+    const files = Array.from(e.dataTransfer?.files || []);
+    const readable = files.filter(f => this._isReadableFile(f));
+    if (!readable.length) return; // images, etc. — let through
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    console.log('[PrivacyShield] intercepted file drop:', readable.map(f => f.name));
+    await this._extractAndPaste(readable);
+  }
+
+  async _onFileInput(e) {
+    if (!this.enabled) return;
+    const files = Array.from(e.target?.files || []);
+    const readable = files.filter(f => this._isReadableFile(f));
+    if (!readable.length) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    console.log('[PrivacyShield] intercepted file input:', readable.map(f => f.name));
+    await this._extractAndPaste(readable);
+  }
+
+  _isReadableFile(file) {
+    if (file.type === 'application/pdf') return true;
+    if (file.type.startsWith('text/')) return true;
+    if (/\.(txt|csv|tsv|md|json|xml|html|log|rtf)$/i.test(file.name)) return true;
+    return false;
+  }
+
+  async _extractAndPaste(files) {
+    this._showBadge(`Reading ${files.length} file${files.length > 1 ? 's' : ''}…`, 'working');
+
+    try {
+      const parts = [];
+      for (const file of files) {
+        const text = await this._extractText(file);
+        if (text?.trim()) {
+          parts.push(`--- ${file.name} ---\n${text.trim()}`);
+        }
+      }
+
+      if (!parts.length) {
+        this._showBadge('No text found in file', 'neutral');
+        return;
+      }
+
+      const extracted = parts.join('\n\n');
+      const existing = this.getInputText().trim();
+      const combined = existing
+        ? `${existing}\n\n${extracted}`
+        : extracted;
+
+      this.setInputText(combined);
+
+      const totalChars = extracted.length;
+      this._showBadge(
+        `Pasted ${totalChars.toLocaleString()} chars from ${files.length} file${files.length > 1 ? 's' : ''} — will anonymize on send`,
+        'ok', 4000,
+      );
+      console.log('[PrivacyShield] pasted', totalChars, 'chars from', files.length, 'file(s)');
+    } catch (err) {
+      console.error('[PrivacyShield] file extraction error:', err);
+      this._showBadge('Failed to read file: ' + err.message, 'error', 4000);
+    }
+  }
+
+  async _extractText(file) {
+    if (file.type === 'application/pdf') {
+      return this._extractPdfText(file);
+    }
+    // Plain text / CSV / MD / etc.
+    return file.text();
+  }
+
+  async _extractPdfText(file) {
+    if (typeof pdfjsLib === 'undefined') {
+      throw new Error('PDF.js not loaded — cannot read PDFs');
+    }
+
+    const buffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
+    const pages = [];
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const text = content.items
+        .map(item => item.str)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text) pages.push(text);
+    }
+
+    console.log('[PrivacyShield] extracted', pages.length, 'pages from PDF');
+    return pages.join('\n\n');
   }
 
   // ─── Mapping helpers ───────────────────────────────────────────────────────
@@ -278,16 +394,13 @@ class PrivacyShieldBase {
 
   _setContentEditable(el, value) {
     el.focus();
-    // Select all existing content
     const sel = window.getSelection();
     const range = document.createRange();
     range.selectNodeContents(el);
     sel.removeAllRanges();
     sel.addRange(range);
-    // Replace with new text
     const ok = document.execCommand('insertText', false, value);
     if (!ok || el.innerText.trim() !== value.trim()) {
-      // execCommand blocked — set directly and fire input event
       el.innerText = value;
       el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
     }
