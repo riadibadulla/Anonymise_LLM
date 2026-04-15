@@ -161,6 +161,17 @@ class PrivacyShieldBase {
     e.preventDefault();
     e.stopImmediatePropagation();
 
+    // Dismiss the site's drag-overlay (it listens for dragleave/dragend to close)
+    // Without this the "Add anything" modal stays frozen on screen.
+    const cleanup = () => {
+      [e.target, document.body].forEach(el => {
+        el.dispatchEvent(new DragEvent('dragleave', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new DragEvent('dragend',   { bubbles: true, cancelable: true }));
+      });
+    };
+    cleanup();
+    setTimeout(cleanup, 50); // second pass for slower React state updates
+
     console.log('[PrivacyShield] intercepted file drop:', readable.map(f => f.name));
     await this._extractAndPaste(readable);
   }
