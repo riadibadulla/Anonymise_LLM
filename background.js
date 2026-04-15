@@ -31,7 +31,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(() => sendResponse({ ok: false }));
     return true;
   }
+
+  // OCR relay: content script can't spawn workers from chrome-extension:// URLs,
+  // so it sends rendered page images here; we forward to the offscreen document
+  // which runs in extension origin and CAN create workers.
+  if (message.type === 'OCR_IMAGE') {
+    (async () => {
+      try {
+        await ensureOffscreen();
+        // Forward to offscreen and relay its response back
+        const result = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage({ type: 'DO_OCR', dataUrl: message.dataUrl }, (res) => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(res);
+          });
+        });
+        sendResponse(result);
+      } catch (err) {
+        sendResponse({ error: err.message });
+      }
+    })();
+    return true;
+  }
 });
+
+async function ensureOffscreen() {
+  const contexts = await chrome.offscreen.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
+  if (!contexts.length) {
+    await chrome.offscreen.createDocument({
+      url: chrome.runtime.getURL('offscreen.html'),
+      reasons: ['WORKERS'],
+      justification: 'Tesseract.js OCR for image-based PDFs',
+    });
+  }
+}
 
 async function checkOllama() {
   const { ollamaUrl } = await chrome.storage.sync.get(['ollamaUrl']);

@@ -24,7 +24,7 @@ class PrivacyShieldBase {
     const settings = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
     this.enabled = settings.enabled;
     this._injectStyles();
-    this._initPdfJs();
+    this._setupPdfJs();
     this._attachInterceptors();
     this._attachFileInterceptors();
     this._pollForUI();
@@ -46,7 +46,7 @@ class PrivacyShieldBase {
 
   // ─── PDF.js setup ─────────────────────────────────────────────────────────
 
-  _initPdfJs() {
+  _setupPdfJs() {
     if (typeof pdfjsLib !== 'undefined') {
       pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL('lib/pdf.worker.min.js');
       console.log('[PrivacyShield] pdf.js ready');
@@ -275,23 +275,27 @@ class PrivacyShieldBase {
       this._showBadge(`Running OCR on ${ocrQueue.length} page${ocrQueue.length > 1 ? 's' : ''}…`, 'working', 60000);
 
       try {
-        const worker = await this._getTesseractWorker();
         for (let j = 0; j < ocrQueue.length; j++) {
           const { index, page } = ocrQueue[j];
           this._showBadge(`OCR page ${j + 1}/${ocrQueue.length}…`, 'working', 60000);
           console.log(`[PrivacyShield] OCR page ${j + 1}/${ocrQueue.length}`);
 
           const canvas = await this._renderPdfPageToCanvas(page);
-          const result = await worker.recognize(canvas);
-          const ocrText = result?.data?.text?.trim() || '';
+          const dataUrl = canvas.toDataURL('image/png');
+          canvas.remove();
+
+          // Send to background → offscreen document (extension origin, can use Workers)
+          const result = await chrome.runtime.sendMessage({ type: 'OCR_IMAGE', dataUrl });
+          if (result?.error) throw new Error(result.error);
+
+          const ocrText = result?.text || '';
           console.log(`[PrivacyShield] page ${index + 1} OCR got ${ocrText.length} chars`);
           pages[index] = ocrText;
-          canvas.remove();
         }
       } catch (err) {
         console.error('[PrivacyShield] OCR failed:', err);
         this._showBadge('OCR failed: ' + err.message, 'error', 6000);
-        throw err; // re-throw so caller knows and can show a real error
+        throw err;
       }
     }
 
@@ -309,27 +313,6 @@ class PrivacyShieldBase {
     return canvas;
   }
 
-  async _getTesseractWorker() {
-    if (this._tesseractWorker) return this._tesseractWorker;
-    if (typeof Tesseract === 'undefined') {
-      throw new Error('Tesseract.js not loaded — check content_scripts in manifest');
-    }
-
-    console.log('[PrivacyShield] Tesseract global:', typeof Tesseract, Object.keys(Tesseract || {}));
-    const base = chrome.runtime.getURL('lib/tesseract/');
-    console.log('[PrivacyShield] Tesseract base URL:', base);
-
-    // No logger passed — it breaks when the worker tries to structured-clone it back
-    this._tesseractWorker = await Tesseract.createWorker('eng', 1, {
-      workerPath:    base + 'worker.min.js',
-      corePath:      base,
-      langPath:      base,
-      workerBlobURL: false,
-      gzip:          true,
-    });
-    console.log('[PrivacyShield] Tesseract worker ready');
-    return this._tesseractWorker;
-  }
 
   // ─── Mapping helpers ───────────────────────────────────────────────────────
 
