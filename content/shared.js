@@ -249,7 +249,9 @@ class PrivacyShieldBase {
     const buffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buffer }).promise;
     const pages = [];
+    const ocrQueue = [];
 
+    // First pass: extract text layer from every page, collect empty pages for OCR
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
@@ -258,11 +260,73 @@ class PrivacyShieldBase {
         .join(' ')
         .replace(/\s+/g, ' ')
         .trim();
-      if (text) pages.push(text);
+
+      if (text && text.length >= 10) {
+        pages[i - 1] = text;
+      } else {
+        // Empty or near-empty — likely image-based, queue for OCR
+        ocrQueue.push({ index: i - 1, page });
+      }
     }
 
-    console.log('[PrivacyShield] extracted', pages.length, 'pages from PDF');
-    return pages.join('\n\n');
+    // Second pass: OCR image-based pages
+    if (ocrQueue.length > 0) {
+      console.log(`[PrivacyShield] ${ocrQueue.length} page(s) need OCR`);
+      this._showBadge(`Running OCR on ${ocrQueue.length} page${ocrQueue.length > 1 ? 's' : ''}…`, 'working', 60000);
+
+      try {
+        const worker = await this._getTesseractWorker();
+        for (let j = 0; j < ocrQueue.length; j++) {
+          const { index, page } = ocrQueue[j];
+          this._showBadge(`OCR page ${j + 1}/${ocrQueue.length}…`, 'working', 60000);
+
+          const canvas = await this._renderPdfPageToCanvas(page);
+          const { data: { text } } = await worker.recognize(canvas);
+          pages[index] = text.trim();
+          canvas.remove();
+        }
+      } catch (err) {
+        console.error('[PrivacyShield] OCR failed:', err);
+        this._showBadge('OCR failed — using text layer only', 'error', 3000);
+      }
+    }
+
+    console.log('[PrivacyShield] extracted', pages.filter(Boolean).length, 'pages from PDF');
+    return pages.filter(Boolean).join('\n\n');
+  }
+
+  async _renderPdfPageToCanvas(page, scale = 2.0) {
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d');
+    await page.render({ canvasContext: ctx, viewport }).promise;
+    return canvas;
+  }
+
+  async _getTesseractWorker() {
+    if (this._tesseractWorker) return this._tesseractWorker;
+    if (typeof Tesseract === 'undefined') {
+      throw new Error('Tesseract.js not loaded');
+    }
+
+    console.log('[PrivacyShield] initializing Tesseract worker');
+    const base = chrome.runtime.getURL('lib/tesseract/');
+    this._tesseractWorker = await Tesseract.createWorker('eng', 1, {
+      workerPath:    base + 'worker.min.js',
+      corePath:      base,
+      langPath:      base,
+      workerBlobURL: false,
+      gzip:          true,
+      logger: (m) => {
+        if (m.status === 'recognizing text' && m.progress > 0) {
+          console.log(`[PrivacyShield] OCR ${Math.round(m.progress * 100)}%`);
+        }
+      },
+    });
+    console.log('[PrivacyShield] Tesseract worker ready');
+    return this._tesseractWorker;
   }
 
   // ─── Mapping helpers ───────────────────────────────────────────────────────

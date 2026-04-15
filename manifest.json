@@ -20,23 +20,31 @@
   "content_scripts": [
     {
       "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
-      "js": ["lib/pdf.min.js", "content/shared.js", "content/chatgpt.js"],
+      "js": ["lib/pdf.min.js", "lib/tesseract/tesseract.min.js", "content/shared.js", "content/chatgpt.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://claude.ai/*"],
-      "js": ["lib/pdf.min.js", "content/shared.js", "content/claude.js"],
+      "js": ["lib/pdf.min.js", "lib/tesseract/tesseract.min.js", "content/shared.js", "content/claude.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["https://gemini.google.com/*"],
-      "js": ["lib/pdf.min.js", "content/shared.js", "content/gemini.js"],
+      "js": ["lib/pdf.min.js", "lib/tesseract/tesseract.min.js", "content/shared.js", "content/gemini.js"],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["lib/pdf.worker.min.js"],
+      "resources": [
+        "lib/pdf.worker.min.js",
+        "lib/tesseract/worker.min.js",
+        "lib/tesseract/tesseract-core-lstm.wasm",
+        "lib/tesseract/tesseract-core-lstm.wasm.js",
+        "lib/tesseract/tesseract-core-simd-lstm.wasm",
+        "lib/tesseract/tesseract-core-simd-lstm.wasm.js",
+        "lib/tesseract/eng.traineddata.gz"
+      ],
       "matches": [
         "https://chatgpt.com/*",
         "https://chat.openai.com/*",

@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/riadibadulla/Anonymise_LLM#readme",
   "dependencies": {
-    "pdfjs-dist": "^3.11.174"
+    "pdfjs-dist": "^3.11.174",
+    "tesseract.js": "^7.0.0"
   }
 }
