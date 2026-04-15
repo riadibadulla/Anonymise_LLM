@@ -271,7 +271,7 @@ class PrivacyShieldBase {
 
     // Second pass: OCR image-based pages
     if (ocrQueue.length > 0) {
-      console.log(`[PrivacyShield] ${ocrQueue.length} page(s) need OCR`);
+      console.log(`[PrivacyShield] ${ocrQueue.length} page(s) have no text layer, running OCR`);
       this._showBadge(`Running OCR on ${ocrQueue.length} page${ocrQueue.length > 1 ? 's' : ''}…`, 'working', 60000);
 
       try {
@@ -279,15 +279,19 @@ class PrivacyShieldBase {
         for (let j = 0; j < ocrQueue.length; j++) {
           const { index, page } = ocrQueue[j];
           this._showBadge(`OCR page ${j + 1}/${ocrQueue.length}…`, 'working', 60000);
+          console.log(`[PrivacyShield] OCR page ${j + 1}/${ocrQueue.length}`);
 
           const canvas = await this._renderPdfPageToCanvas(page);
-          const { data: { text } } = await worker.recognize(canvas);
-          pages[index] = text.trim();
+          const result = await worker.recognize(canvas);
+          const ocrText = result?.data?.text?.trim() || '';
+          console.log(`[PrivacyShield] page ${index + 1} OCR got ${ocrText.length} chars`);
+          pages[index] = ocrText;
           canvas.remove();
         }
       } catch (err) {
         console.error('[PrivacyShield] OCR failed:', err);
-        this._showBadge('OCR failed — using text layer only', 'error', 3000);
+        this._showBadge('OCR failed: ' + err.message, 'error', 6000);
+        throw err; // re-throw so caller knows and can show a real error
       }
     }
 
@@ -308,22 +312,20 @@ class PrivacyShieldBase {
   async _getTesseractWorker() {
     if (this._tesseractWorker) return this._tesseractWorker;
     if (typeof Tesseract === 'undefined') {
-      throw new Error('Tesseract.js not loaded');
+      throw new Error('Tesseract.js not loaded — check content_scripts in manifest');
     }
 
-    console.log('[PrivacyShield] initializing Tesseract worker');
+    console.log('[PrivacyShield] Tesseract global:', typeof Tesseract, Object.keys(Tesseract || {}));
     const base = chrome.runtime.getURL('lib/tesseract/');
+    console.log('[PrivacyShield] Tesseract base URL:', base);
+
+    // No logger passed — it breaks when the worker tries to structured-clone it back
     this._tesseractWorker = await Tesseract.createWorker('eng', 1, {
       workerPath:    base + 'worker.min.js',
       corePath:      base,
       langPath:      base,
       workerBlobURL: false,
       gzip:          true,
-      logger: (m) => {
-        if (m.status === 'recognizing text' && m.progress > 0) {
-          console.log(`[PrivacyShield] OCR ${Math.round(m.progress * 100)}%`);
-        }
-      },
     });
     console.log('[PrivacyShield] Tesseract worker ready');
     return this._tesseractWorker;
